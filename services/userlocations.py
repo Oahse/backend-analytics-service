@@ -1,106 +1,90 @@
-from typing import Optional, List, Dict, Any
+from datetime import date, timedelta
+from typing import List, Dict, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy import func
-from datetime import date
-from models.kpis import OrderEvents
-from schemas.kpis import OrderEventsSchema  # Your schema with constr, confloat etc.
+from sqlalchemy import select, func, and_
 
-class OrderEventService:
+from models.visitors import UserLocationStats  # adjust path if needed
+
+
+class UserLocationStatsService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_order_events(
-        self, start_date: Optional[date] = None, end_date: Optional[date] = None
-    ) -> List[OrderEventsSchema]:
-        stmt = select(OrderEvents)
-        if start_date:
-            stmt = stmt.where(OrderEvents.date >= start_date)
-        if end_date:
-            stmt = stmt.where(OrderEvents.date <= end_date)
-
-        result = await self.db.execute(stmt)
-        records = result.scalars().all()
-        return [OrderEventsSchema.from_orm(rec) for rec in records]
-
-    async def get_order_event_by_date(self, target_date: date) -> Optional[OrderEventsSchema]:
-        stmt = select(OrderEvents).where(OrderEvents.date == target_date)
-        result = await self.db.execute(stmt)
-        record = result.scalar_one_or_none()
-        return OrderEventsSchema.from_orm(record) if record else None
-
-    async def get_weekly_order_events(self, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_stats_by_date(self, target_date: date) -> List[Dict[str, any]]:
         stmt = (
             select(
-                func.date_trunc('week', OrderEvents.date).label('week_start'),
-                func.sum(OrderEvents.total_orders).label('total_orders'),
-                func.sum(OrderEvents.total_revenue).label('total_revenue'),
-                func.sum(OrderEvents.total_earnings).label('total_earnings'),
+                UserLocationStats.country,
+                UserLocationStats.state,
+                func.sum(UserLocationStats.users).label("users")
             )
-            .group_by('week_start')
-            .order_by('week_start')
+            .where(UserLocationStats.date == target_date)
+            .group_by(UserLocationStats.country, UserLocationStats.state)
         )
-        if year:
-            stmt = stmt.where(func.extract('year', OrderEvents.date) == year)
-
         result = await self.db.execute(stmt)
-        return [dict(row) for row in result.all()]
+        return [dict(row._mapping) for row in result.fetchall()]
 
-    async def get_monthly_order_events(self, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_stats_between_dates(self, start: date, end: date) -> List[Dict[str, any]]:
         stmt = (
             select(
-                func.date_trunc('month', OrderEvents.date).label('month_start'),
-                func.sum(OrderEvents.total_orders).label('total_orders'),
-                func.sum(OrderEvents.total_revenue).label('total_revenue'),
-                func.sum(OrderEvents.total_earnings).label('total_earnings'),
+                UserLocationStats.country,
+                UserLocationStats.state,
+                func.sum(UserLocationStats.users).label("users")
             )
-            .group_by('month_start')
-            .order_by('month_start')
+            .where(and_(UserLocationStats.date >= start, UserLocationStats.date <= end))
+            .group_by(UserLocationStats.country, UserLocationStats.state)
         )
-        if year:
-            stmt = stmt.where(func.extract('year', OrderEvents.date) == year)
-
         result = await self.db.execute(stmt)
-        return [dict(row) for row in result.all()]
+        return [dict(row._mapping) for row in result.fetchall()]
 
-    async def get_yearly_order_events(self) -> List[Dict[str, Any]]:
+    async def get_daily_stats(self, current_day: date) -> Dict[str, any]:
+        return {
+            "date": current_day.isoformat(),
+            "locations": await self.get_stats_by_date(current_day)
+        }
+
+    async def get_weekly_stats(self, current_day: date) -> Dict[str, any]:
+        start_of_week = current_day - timedelta(days=current_day.weekday())
+        end_of_week = start_of_week + timedelta(days=6)
+        return {
+            "start_date": start_of_week.isoformat(),
+            "end_date": end_of_week.isoformat(),
+            "locations": await self.get_stats_between_dates(start_of_week, end_of_week)
+        }
+
+    async def get_monthly_stats(self, year: int, month: int) -> Dict[str, any]:
+        start_date = date(year, month, 1)
+        if month == 12:
+            end_date = date(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_date = date(year, month + 1, 1) - timedelta(days=1)
+
+        return {
+            "month": start_date.strftime("%B"),
+            "year": year,
+            "locations": await self.get_stats_between_dates(start_date, end_date)
+        }
+
+    async def get_yearly_stats(self, year: int) -> Dict[str, any]:
+        start_date = date(year, 1, 1)
+        end_date = date(year, 12, 31)
+        return {
+            "year": year,
+            "locations": await self.get_stats_between_dates(start_date, end_date)
+        }
+
+    async def get_country_percent_distribution(self, target_date: date) -> Dict[str, float]:
         stmt = (
             select(
-                func.date_trunc('year', OrderEvents.date).label('year_start'),
-                func.sum(OrderEvents.total_orders).label('total_orders'),
-                func.sum(OrderEvents.total_revenue).label('total_revenue'),
-                func.sum(OrderEvents.total_earnings).label('total_earnings'),
+                UserLocationStats.country,
+                func.sum(UserLocationStats.users).label("users")
             )
-            .group_by('year_start')
-            .order_by('year_start')
+            .where(UserLocationStats.date == target_date)
+            .group_by(UserLocationStats.country)
         )
         result = await self.db.execute(stmt)
-        return [dict(row) for row in result.all()]
-    
-    async def add_or_update(self, data: OrderEventsSchema) -> OrderEventsSchema:
-        # Try to find existing record by date
-        stmt = select(OrderEvents).where(OrderEvents.date == data.date)
-        result = await self.db.execute(stmt)
-        existing_record = result.scalar_one_or_none()
-
-        if existing_record:
-            # Update existing record
-            existing_record.total_orders = data.total_orders
-            existing_record.total_revenue = data.total_revenue
-            existing_record.total_earnings = data.total_earnings
-            self.db.add(existing_record)  # Optional if already in session
-            await self.db.commit()
-            await self.db.refresh(existing_record)
-            return OrderEventsSchema.from_orm(existing_record)
-
-        # Insert new record
-        new_record = OrderEvents(
-            date=data.date,
-            total_orders=data.total_orders,
-            total_revenue=data.total_revenue,
-            total_earnings=data.total_earnings,
-        )
-        self.db.add(new_record)
-        await self.db.commit()
-        await self.db.refresh(new_record)
-        return OrderEventsSchema.from_orm(new_record)
+        rows = result.fetchall()
+        total = sum(row.users for row in rows)
+        return {
+            row.country: round((row.users / total) * 100, 2) if total > 0 else 0.0
+            for row in rows
+        }
