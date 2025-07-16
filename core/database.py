@@ -1,36 +1,36 @@
-import asyncio
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from core.config import settings, logging
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
-CHAR_LENGTH = 255
-CLICKHOUSE_DATABASE_URI = str(settings.CLICKHOUSE_DATABASE_URI)
+from core.config import settings
 
-# Create synchronous engine (no async driver for ClickHouse HTTP)
-engine_db = create_engine(CLICKHOUSE_DATABASE_URI, echo=True, pool_pre_ping=True)
+Base = declarative_base()
+CHAR_LENGTH=255
 
-SessionLocal = sessionmaker(bind=engine_db, autocommit=False, autoflush=False)
+# Database engine
+SQLALCHEMY_DATABASE_URL = str(settings.SQLALCHEMY_DATABASE_URI) 
+# print(SQLALCHEMY_DATABASE_URL,'------')
+# print(str(settings.ENVIRONMENT),'environment')
 
-# Sync session getter
-def get_db():
-    db = SessionLocal()
+engine_db = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True)
+
+# Session factory for the first database (Async)
+AsyncSessionDB = sessionmaker(
+    bind=engine_db, 
+    class_=AsyncSession, 
+    expire_on_commit=True, 
+    pool_pre_ping=True  # ensures connection is alive before use
+)
+
+
+# Dependency to get the async session for the first database
+async def get_db():
     try:
-        logging.info("Database connected")
-        yield db
-    except Exception as e:
-        logging.critical(f"Database connection failed: {e}")
-        raise
-    finally:
-        db.close()
-
-# Async wrapper using asyncio.to_thread (Python 3.9+)
-async def get_async_db():
-    loop = asyncio.get_running_loop()
-    # Run sync session getter inside threadpool
-    db_gen = await loop.run_in_executor(None, get_db)
-    try:
-        async for session in db_gen:
+        async with AsyncSessionDB() as session:
+            print(f"Database connected")
             yield session
-    finally:
-        # cleanup handled by sync get_db finally
-        pass
+    except Exception as e:
+        # Log the error or handle it accordingly
+        print(f"Database connection failed: {e}")
+        raise
