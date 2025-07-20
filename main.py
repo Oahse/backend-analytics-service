@@ -3,8 +3,9 @@ from core.config import Settings
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from routes.orders import router as order_router
-from routes.payments import router as payment_router
+from routes.kpis import router as kpis_router
+from routes.visitors import router as visitors_router
+from routes.userlocations import router as userlocations_router
 from core.database import get_db 
 from core.utils.response import Response, RequestValidationError 
 from core.utils.kafka import KafkaConsumer,KafkaProducer ,is_kafka_available
@@ -12,8 +13,8 @@ import asyncio, logging
 
 
 app = FastAPI(
-    title="Order and Payment Service API",
-    description="Handles Product operations.",
+    title="Analytics Service API",
+    description="Handles Analytics operations.",
     version="1.0.0"
 )
 
@@ -49,14 +50,15 @@ if settings.BACKEND_CORS_ORIGINS:
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
 # Register all routers (API route groups) for different resources
-app.include_router(order_router)
-app.include_router(payment_router)
+app.include_router(kpis_router)
+app.include_router(visitors_router)
+app.include_router(userlocations_router)
 
 # Basic health endpoint to check if service is running
 @app.get("/")
 async def read_root():
     return {
-        "service": "Order Service API",
+        "service": "Analytics Service API",
         "status": "Running",
         "version": "1.0.0"
     }

@@ -29,7 +29,7 @@ class KPIService:
 
         result = await self.db.execute(stmt)
         records = result.scalars().all()
-        return [DailyKPIsSchema.from_orm(r) for r in records]
+        return records
 
     async def get_weekly_kpis(self, year: Optional[int] = None) -> List[Dict[str, Any]]:
         # We approximate start of week by truncating date to Monday using date_trunc for PostgreSQL
